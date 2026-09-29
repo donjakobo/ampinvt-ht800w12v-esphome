@@ -87,29 +87,41 @@ All via function `0x04` (read input registers), read-only:
 | 1 | AC Input Frequency | ÷10 | Hz | |
 | 2 | AC Output Voltage | ÷10 | V | |
 | 3 | AC Output Frequency | ÷10 | Hz | |
-| 6 | Charge Current | ÷10 | A | May actually be general battery current (charge/discharge), not charge-only OR even the indicator in A of load — unconfirmed sign behavior, I'll likely test later |
+| 6 | Load Percentage | ×1 (no scaling) | % | Confirmed by adding a known ~95W load (box fan) and watching the raw value track it in real time. Originally mislabeled "Charge Current" with a ÷10 filter — the raw integer *is* the percentage. This unit does not appear to expose actual charge current anywhere. |
 | 7 | Battery Voltage | ÷10 | V | |
 | 9 | Battery Capacity | ×1 | % | Voltage-curve estimate, not a true coulomb-counted SoC — expect it to swing with load |
 | 32 | Status Word (raw) | — | — | Bit meanings undecoded. Reads `0x0103` (259) with AC present + charging, matching the reference HT-12212 unit exactly |
 
+In addition to the register-backed sensors above, one **derived** sensor is
+computed entirely on the ESP32:
+
+| Sensor | Source | Formula | Unit | Notes |
+|---|---|---|---|---|
+| Calculated Load | Load Percentage (reg 6) | `load_percentage × 8.0` | W | Assumes a linear 800W rated scale. Verified at only two real-load points (~20%, ~35%) — not a substitute for a real power meter. Exists because this unit doesn't report Output Power over Modbus (see above). |
+
 ## What doesn't work on the HT-800W12V
 
 Unlike the HT-1200W12V this protocol was originally reverse-engineered
-against, the **HT-800W12V does not expose Load %, Output Power, or
-Temperature** over Modbus — on either input or holding registers, across an
-exhaustive sweep. See [FINDINGS.md](FINDINGS.md) for the full methodology,
-including cross-checking against a real ~200W load measured independently
-with a smart plug.
+against, the **HT-800W12V does not expose Output Power, Temperature, or
+Charge Current** over Modbus — on either input or holding registers, across
+an exhaustive sweep. (Load % *is* available — see register 6 above; it was
+initially mislabeled as Charge Current before a known-load test corrected
+it.) See [FINDINGS.md](FINDINGS.md) for the full methodology, including
+cross-checking against a real ~200W load measured independently with a
+smart plug, and a second confirmation from deliberately adding a ~95W load
+and watching Load % track it.
 
-If you need real power draw from an HT-800W12V setup, use an external smart
-plug upstream of the unit — the inverter itself won't report it.
+A "Calculated Load" sensor (see the derived-sensor table above) provides a
+rough wattage estimate from Load %, but for real, measured power draw, use
+an external smart plug upstream of the unit — the inverter itself won't
+give you an actual watt reading over Modbus.
 
 ## Verified on
 
 | Model | Internal model | Wattage | Verified by | Load% / Power / Temp | Notes |
 |---|---|---|---|---|---|
 | HT-1200W12V | HT-12212 | 1200W | [Bgilsing](https://github.com/Bgilsing/ampinvt-ht12212-modbus) | Working | Original protocol reverse-engineering |
-| HT-800W12V | — | 800W | this repo | **Not implemented** | AC V/Hz, charge current, battery V/%, status word all confirmed working |
+| HT-800W12V | — | 800W | this repo | **Not implemented** (power, temp); charge current also appears unavailable | AC V/Hz, load %, battery V/%, status word all confirmed working |
 
 If you test this against another model in the line, please open an issue or
 PR with your findings — a register-by-register confirmation table like the
@@ -117,7 +129,7 @@ one above is exactly what makes this useful across the product line.
 
 ## Setup
 
-1. Wire everything per the table below: ![Wiring Diagram](./docs/wiring-diagram.svg).
+1. Wire everything per the table below: ![Wiring Diagram](./docs/wiring-diagram.svg)
 2. Copy `config/secrets.yaml.example` to `config/secrets.yaml` and fill in
    your WiFi credentials. (Or let the ESPHome dashboard generate an API key
    for you when you add the device — either works.)

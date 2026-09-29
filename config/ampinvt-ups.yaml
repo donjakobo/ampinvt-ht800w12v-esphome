@@ -136,16 +136,35 @@ sensor:
 
   - platform: modbus_controller
     modbus_controller_id: ampinvt
-    name: "Charge Current"
+    id: load_percentage
+    name: "Load Percentage"
     register_type: read
     address: 6
-    unit_of_measurement: "A"
-    device_class: current
+    unit_of_measurement: "%"
+    icon: "mdi:gauge"
     state_class: measurement
     value_type: U_WORD
-    filters:
-      - multiply: 0.1
-    accuracy_decimals: 1
+    accuracy_decimals: 0
+
+  # Derived, not measured — this unit does not report Output Power over
+  # Modbus (see FINDINGS.md). Assumes a linear 800W scale against Load %,
+  # verified at only two real-load data points (~20%, ~35%). Treat as a
+  # rough estimate for dashboards/automations, not a substitute for a
+  # real power meter.
+  - platform: template
+    name: "Calculated Load"
+    id: calculated_load
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 0
+    update_interval: 5s
+    lambda: |-
+      if (id(load_percentage).has_state()) {
+        return id(load_percentage).state * 8.0;  // 800W rated / 100
+      } else {
+        return {};
+      }
 
   - platform: modbus_controller
     modbus_controller_id: ampinvt
