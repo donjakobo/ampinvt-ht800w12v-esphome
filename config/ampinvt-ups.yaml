@@ -1,0 +1,192 @@
+# ESPHome config for AMPINVT HT-800W12V UPS/inverter-charger monitoring
+# via RS485 Modbus RTU, reporting into Home Assistant.
+#
+# Hardware:
+#   - ESP32 dev board (tested on a "NodeMCU-32S" labelled ESP32-WROOM-32 board)
+#   - HiLetgo TTL-to-RS485 UART module with automatic flow control
+#   - AMPINVT HT-800W12V UPS/charger/inverter
+#
+# See ../README.md for wiring, register map, and what this model does /
+# does not expose over Modbus. See ../FINDINGS.md for the full sweep
+# methodology and results.
+
+esphome:
+  name: ampinvt-ups
+  friendly_name: Ampinvt UPS
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+# --- Wi-Fi ---
+# Copy secrets.yaml.example to secrets.yaml (same folder) and fill in your
+# own values. Never commit secrets.yaml.
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  ap:
+    ssid: "Ampinvt-UPS Fallback"
+    password: "fallback1234"
+
+captive_portal:
+
+ota:
+  - platform: esphome
+
+api:
+  encryption:
+    key: !secret api_key
+
+logger:
+  # UART0 (GPIO1/3) is reserved for this — not used for Modbus
+  baud_rate: 115200
+
+# --- RS485 link to the inverter ---
+# RJ45 pin 1 (A+) -> RS485 module A+
+# RJ45 pin 2 (B-) -> RS485 module B-
+# RJ45 pin 8 (GND, labelled 接大地 on some boards) -> RS485 module GND
+# RJ45 pin 6 carries ~18.5V on this unit and is NOT part of the RS485 pair.
+# Never connect it — it will destroy a transceiver. See docs/wiring-diagram.svg.
+#
+# RS485 module VCC -> ESP32 3.3V
+# RS485 module GND -> ESP32 GND
+# RS485 module TXD -> ESP32 GPIO17
+# RS485 module RXD -> ESP32 GPIO16
+# (This particular auto-flow module needed straight, non-crossed TX/RX
+# wiring to work — if you get zero responses, try swapping GPIO16/17.)
+uart:
+  id: modbus_uart
+  tx_pin: GPIO17
+  rx_pin: GPIO16
+  baud_rate: 9600
+  stop_bits: 1
+
+modbus:
+  id: modbus_bus
+  uart_id: modbus_uart
+
+modbus_controller:
+  id: ampinvt
+  address: 0x01
+  modbus_id: modbus_bus
+  # The inverter should not be polled faster than ~1 Hz.
+  update_interval: 5s
+
+sensor:
+  # --- Confirmed working input registers (function 0x04) on the 800W unit ---
+  # Load %, Output Power, and both Temperature registers were swept
+  # extensively (input regs 0-32, several holding regs) and found to be
+  # unimplemented on this 800W unit — they read a static 0/1 regardless of
+  # real load. See FINDINGS.md. Use an external smart plug for real power
+  # draw if you need it.
+
+  - platform: modbus_controller
+    modbus_controller_id: ampinvt
+    name: "AC Input Voltage"
+    register_type: read
+    address: 0
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    value_type: U_WORD
+    filters:
+      - multiply: 0.1
+    accuracy_decimals: 1
+
+  - platform: modbus_controller
+    modbus_controller_id: ampinvt
+    name: "AC Input Frequency"
+    register_type: read
+    address: 1
+    unit_of_measurement: "Hz"
+    device_class: frequency
+    state_class: measurement
+    value_type: U_WORD
+    filters:
+      - multiply: 0.1
+    accuracy_decimals: 1
+
+  - platform: modbus_controller
+    modbus_controller_id: ampinvt
+    name: "AC Output Voltage"
+    register_type: read
+    address: 2
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    value_type: U_WORD
+    filters:
+      - multiply: 0.1
+    accuracy_decimals: 1
+
+  - platform: modbus_controller
+    modbus_controller_id: ampinvt
+    name: "AC Output Frequency"
+    register_type: read
+    address: 3
+    unit_of_measurement: "Hz"
+    device_class: frequency
+    state_class: measurement
+    value_type: U_WORD
+    filters:
+      - multiply: 0.1
+    accuracy_decimals: 1
+
+  - platform: modbus_controller
+    modbus_controller_id: ampinvt
+    name: "Charge Current"
+    register_type: read
+    address: 6
+    unit_of_measurement: "A"
+    device_class: current
+    state_class: measurement
+    value_type: U_WORD
+    filters:
+      - multiply: 0.1
+    accuracy_decimals: 1
+
+  - platform: modbus_controller
+    modbus_controller_id: ampinvt
+    name: "Battery Voltage"
+    register_type: read
+    address: 7
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    value_type: U_WORD
+    filters:
+      - multiply: 0.1
+    accuracy_decimals: 1
+
+  - platform: modbus_controller
+    modbus_controller_id: ampinvt
+    name: "Battery Capacity"
+    register_type: read
+    address: 9
+    unit_of_measurement: "%"
+    device_class: battery
+    state_class: measurement
+    value_type: U_WORD
+    accuracy_decimals: 0
+
+  # Status/mode word — bit meanings not decoded. Kept as a diagnostic
+  # entity in case patterns emerge across states (AC loss, fault, idle)
+  # worth documenting upstream.
+  - platform: modbus_controller
+    modbus_controller_id: ampinvt
+    name: "Status Word (raw)"
+    register_type: read
+    address: 32
+    value_type: U_WORD
+    accuracy_decimals: 0
+    entity_category: diagnostic
+
+  # Uptime/WiFi diagnostics
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    update_interval: 60s
+
+  - platform: uptime
+    name: "Uptime"

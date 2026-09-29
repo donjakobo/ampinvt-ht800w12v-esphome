@@ -1,0 +1,90 @@
+<svg width="1000" height="620" viewBox="0 0 1000 620" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+  <style>
+    .card { fill:#12181f; stroke:#3a4552; stroke-width:1.5; rx:10; }
+    .card-danger { fill:#2a1414; stroke:#a83232; stroke-width:1.5; rx:10; }
+    .card-ok { fill:#132018; stroke:#2f8a52; stroke-width:1.5; rx:10; }
+    .title { fill:#e8edf2; font-size:17px; font-weight:700; }
+    .label { fill:#b8c2cc; font-size:13px; }
+    .pin { fill:#e8edf2; font-size:13px; font-weight:600; }
+    .small { fill:#8a94a0; font-size:11px; }
+    .wire { stroke:#5c9fd6; stroke-width:2; fill:none; }
+    .wire-gnd { stroke:#8a94a0; stroke-width:2; fill:none; }
+    .wire-warn { stroke:#c94b4b; stroke-width:2.5; stroke-dasharray:5,4; fill:none; }
+  </style>
+  <rect width="1000" height="620" fill="#0a0e13"/>
+  <text x="500" y="34" text-anchor="middle" class="title" font-size="22">Ampinvt HT-800W12V → HiLetgo RS485 → ESP32 (NodeMCU-32S)</text>
+  <text x="500" y="56" text-anchor="middle" class="small">Reference wiring — verify with a multimeter before powering on</text>
+
+  <!-- RJ45 jack -->
+  <rect x="40" y="90" width="260" height="230" class="card"/>
+  <text x="170" y="118" text-anchor="middle" class="title" font-size="15">Inverter RJ45 Port</text>
+  <g class="pin">
+    <text x="60" y="150">Pin 1 — A+</text>
+    <text x="60" y="175">Pin 2 — B−</text>
+    <text x="60" y="200" class="small">Pin 3,4,5 — unused</text>
+    <text x="60" y="225" fill="#e08a8a">Pin 6 — 18.5V (NEVER connect)</text>
+    <text x="60" y="250" class="small">Pin 7 — +5V out (optional)</text>
+    <text x="60" y="275">Pin 8 — GND (接大地)</text>
+  </g>
+  <text x="60" y="305" class="small">Measured, referenced to pin 8</text>
+
+  <!-- RS485 module -->
+  <rect x="370" y="90" width="260" height="380" class="card"/>
+  <text x="500" y="118" text-anchor="middle" class="title" font-size="15">HiLetgo TTL↔RS485</text>
+  <text x="500" y="136" text-anchor="middle" class="small">Auto flow control module</text>
+
+  <text x="390" y="165" class="label" font-weight="700">Bus-side terminal:</text>
+  <text x="400" y="188" class="pin">A+</text>
+  <text x="400" y="213" class="pin">B−</text>
+  <text x="400" y="238" class="pin">接大地 (GND)</text>
+
+  <line x1="360" y1="150" x2="390" y2="188" class="wire"/>
+  <line x1="360" y1="175" x2="390" y2="213" class="wire"/>
+  <line x1="360" y1="275" x2="390" y2="238" class="wire-gnd"/>
+
+  <line x1="360" y1="225" x2="365" y2="225" class="wire-warn"/>
+  <text x="368" y="229" class="small" fill="#e08a8a">pin 6 stays disconnected</text>
+
+  <text x="390" y="290" class="label" font-weight="700">Logic-side header:</text>
+  <text x="400" y="313" class="pin">GND</text>
+  <text x="400" y="338" class="pin">RXD</text>
+  <text x="400" y="363" class="pin">TXD</text>
+  <text x="400" y="388" class="pin">VCC</text>
+  <text x="400" y="415" class="small">LED near RXD blinks on inbound poll —</text>
+  <text x="400" y="430" class="small">confirms the ESP32 is transmitting.</text>
+
+  <!-- ESP32 -->
+  <rect x="700" y="90" width="260" height="380" class="card-ok"/>
+  <text x="830" y="118" text-anchor="middle" class="title" font-size="15">ESP32 (NodeMCU-32S)</text>
+  <text x="830" y="136" text-anchor="middle" class="small">esphome board: esp32dev</text>
+
+  <text x="720" y="175" class="pin">GND</text>
+  <text x="720" y="200" class="pin">GPIO17 (UART TX)</text>
+  <text x="720" y="225" class="pin">GPIO16 (UART RX)</text>
+  <text x="720" y="250" class="pin">3.3V</text>
+  <text x="720" y="290" class="small">USB 5V / VIN — bench power only.</text>
+  <text x="720" y="305" class="small">Do not power from inverter pin 7</text>
+  <text x="720" y="320" class="small">at the same time as USB.</text>
+
+  <line x1="660" y1="313" x2="720" y2="175" class="wire-gnd"/>
+  <line x1="660" y1="363" x2="720" y2="200" class="wire"/>
+  <line x1="660" y1="338" x2="720" y2="225" class="wire"/>
+  <line x1="660" y1="388" x2="720" y2="250" class="wire"/>
+
+  <text x="830" y="420" class="label" font-weight="700">Note on this build:</text>
+  <text x="720" y="440" class="small">This module needed straight TX/RX</text>
+  <text x="720" y="453" class="small">wiring (module TXD→GPIO17,</text>
+  <text x="720" y="466" class="small">RXD→GPIO16) rather than the usual</text>
+  <text x="720" y="479" class="small">crossed convention. Test both if</text>
+  <text x="720" y="492" class="small">you get no response at first.</text>
+
+  <!-- Legend -->
+  <rect x="40" y="520" width="920" height="80" class="card"/>
+  <line x1="60" y1="545" x2="100" y2="545" class="wire"/>
+  <text x="110" y="549" class="small">Data / power connection</text>
+  <line x1="60" y1="570" x2="100" y2="570" class="wire-gnd"/>
+  <text x="110" y="574" class="small">Ground</text>
+  <line x1="320" y1="545" x2="360" y2="545" class="wire-warn"/>
+  <text x="370" y="549" class="small" fill="#e08a8a">Never connect — 18.5V, will destroy a receiver</text>
+  <text x="60" y="592" class="small">Full field-tested register map and sensor list: see README.md and FINDINGS.md in this repo.</text>
+</svg>

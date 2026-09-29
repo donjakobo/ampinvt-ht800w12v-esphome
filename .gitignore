@@ -1,0 +1,12 @@
+# Never commit real credentials
+secrets.yaml
+config/secrets.yaml
+
+# ESPHome build artifacts
+.esphome/
+*.bin
+*.elf
+
+# Editor/OS cruft
+.vscode/
+.DS_Store
