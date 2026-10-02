@@ -10,7 +10,9 @@ This started as a fork of the excellent groundwork in
 which reverse-engineered the Modbus RTU protocol on the **HT-1200W12V
 (HT-12212)**. This repo documents what changes — and what doesn't work — on
 the smaller **HT-800W12V** unit, plus a full ESPHome build instead of a
-Raspberry Pi + Modbus TCP gateway.
+Raspberry Pi + Modbus TCP gateway. Findings here are now additionally
+backed by the manufacturer's own Modbus protocol document — see
+[`docs/modbus-protocol-reference.md`](docs/modbus-protocol-reference.md).
 
 If you own any Ampinvt HT/HTS/FT/TG-series inverter, testing this against
 your unit and reporting back (here or upstream) helps map the whole product
@@ -73,9 +75,9 @@ convention. If you wire the conventional way and get complete silence
 (Modbus timeouts, device shows offline), try swapping GPIO16/17 before
 assuming anything else is wrong.
 
-Link parameters: **9600 baud, 8N1, slave address 1**, Modbus RTU, matching
-the upstream repo's findings — this part is identical across the HT-1200W12V
-and HT-800W12V.
+Link parameters: **9600 baud, 8N1, slave address 1**, Modbus RTU — confirmed
+by both the upstream repo's reverse-engineering and the manufacturer's own
+protocol document (see `docs/modbus-protocol-reference.md`).
 
 ## Sensors and registers (confirmed working on the HT-800W12V)
 
@@ -87,29 +89,44 @@ All via function `0x04` (read input registers), read-only:
 | 1 | AC Input Frequency | ÷10 | Hz | |
 | 2 | AC Output Voltage | ÷10 | V | |
 | 3 | AC Output Frequency | ÷10 | Hz | |
-| 6 | Load Percentage | ×1 (no scaling) | % | Confirmed by adding a known ~95W load (box fan) and watching the raw value track it in real time. Originally mislabeled "Charge Current" with a ÷10 filter — the raw integer *is* the percentage. This unit does not appear to expose actual charge current anywhere. |
+| 6 | Load Percentage | ×1 (no scaling) | % | Officially "Output Load Rate" per the vendor doc (0–300% range — can exceed 100 during overload). Confirmed by adding a known ~95W load and watching the raw value track it in real time. |
 | 7 | Battery Voltage | ÷10 | V | |
 | 9 | Battery Capacity | ×1 | % | Voltage-curve estimate, not a true coulomb-counted SoC — expect it to swing with load |
-| 32 | Status Word (raw) | — | — | Bit meanings undecoded. Reads `0x0103` (259) with AC present + charging, matching the reference HT-12212 unit exactly |
+| 32 | Operating Status Word (raw) | — | — | Bitfield, vendor-documented (Table 3.1.2) and field-verified against a real grid-loss/grid-restore event. Decoded into four binary sensors — see below. |
+| 35 | Event Code (raw) | — | — | Vendor-documented 0–9 fault/warning table (Table 3.1.3). Decoded into a text sensor — see below. Only code 0 (Normal) observed so far. |
 
-In addition to the register-backed sensors above, one **derived** sensor is
-computed entirely on the ESP32:
+### Derived and decoded sensors
 
-| Sensor | Source | Formula | Unit | Notes |
-|---|---|---|---|---|
-| Calculated Load | Load Percentage (reg 6) | `load_percentage × 8.0` | W | Assumes a linear 800W rated scale. Verified at only two real-load points (~20%, ~35%) — not a substitute for a real power meter. Exists because this unit doesn't report Output Power over Modbus (see above). |
+In addition to the register-backed sensors above, several sensors are
+computed or decoded entirely on the ESP32:
+
+| Sensor | Source | Notes |
+|---|---|---|
+| Calculated Load | Load Percentage (reg 6) | `load_percentage × 8.0` watts, recalculated the instant Load Percentage updates (via an `on_value` trigger, not an independent timer — the two were briefly out of sync in early testing before this fix). Assumes a linear 800W rated scale; not a substitute for a real power meter. |
+| Grid Normal, Battery Charging, Inverter Active, Output Enabled | Operating Status Word (reg 32), bits 0/1/2/8 | Vendor-documented bit assignments, field-verified across all three real states: grid-on, grid-cut (running on battery), and grid-restored. |
+| Inverter Event and Alarm State | Event Code (reg 35) | Vendor-documented 0–9 text mapping. |
+
+### What was removed, and why
+
+An earlier version of this YAML included an **"Inverter Operating Mode"**
+sensor, decoded from holding register `0x0007`, sourced from another
+HT-12212 owner's GitHub issue rather than the vendor document. On this
+unit, its value ("Inverter Mode (Battery)") directly contradicted the
+vendor-confirmed status bits read at the same moment. It has been removed
+from the YAML entirely — see FINDINGS.md for the full comparison.
 
 ## What doesn't work on the HT-800W12V
 
 Unlike the HT-1200W12V this protocol was originally reverse-engineered
-against, the **HT-800W12V does not expose Output Power, Temperature, or
-Charge Current** over Modbus — on either input or holding registers, across
-an exhaustive sweep. (Load % *is* available — see register 6 above; it was
-initially mislabeled as Charge Current before a known-load test corrected
-it.) See [FINDINGS.md](FINDINGS.md) for the full methodology, including
+against, the **HT-800W12V does not expose Output Current (reg 4),
+Temperature (regs 13/14), or DC Bus Current (reg 12)** over Modbus, despite
+all being named, documented fields in the manufacturer's own protocol
+spec — they read static/zero on this unit regardless of real conditions.
+(Register 5 is officially marked "Reserved" in the vendor doc, so its
+static-zero reading isn't a gap, it's expected.) See
+[FINDINGS.md](FINDINGS.md) for the full methodology, including
 cross-checking against a real ~200W load measured independently with a
-smart plug, and a second confirmation from deliberately adding a ~95W load
-and watching Load % track it.
+smart plug, and a second confirmation from deliberately adding a ~95W load.
 
 A "Calculated Load" sensor (see the derived-sensor table above) provides a
 rough wattage estimate from Load %, but for real, measured power draw, use
@@ -118,10 +135,10 @@ give you an actual watt reading over Modbus.
 
 ## Verified on
 
-| Model | Internal model | Wattage | Verified by | Load% / Power / Temp | Notes |
-|---|---|---|---|---|---|
-| HT-1200W12V | HT-12212 | 1200W | [Bgilsing](https://github.com/Bgilsing/ampinvt-ht12212-modbus) | Working | Original protocol reverse-engineering |
-| HT-800W12V | — | 800W | this repo | **Not implemented** (power, temp); charge current also appears unavailable | AC V/Hz, load %, battery V/%, status word all confirmed working |
+| Model | Internal model | Wattage | Verified by | Notes |
+|---|---|---|---|---|
+| HT-1200W12V | HT-12212 | 1200W | [Bgilsing](https://github.com/Bgilsing/ampinvt-ht12212-modbus) | Original protocol reverse-engineering |
+| HT-800W12V | — | 800W | this repo | AC V/Hz, Load %, Battery V/%, status word (all 4 bits), event code all confirmed working and vendor-documented. Output Current, Temperature, DC Bus Current confirmed unimplemented on this unit despite being documented fields. |
 
 If you test this against another model in the line, please open an issue or
 PR with your findings — a register-by-register confirmation table like the
@@ -129,7 +146,7 @@ one above is exactly what makes this useful across the product line.
 
 ## Setup
 
-1. Wire everything per the table below: ![Wiring Diagram](./docs/wiring-diagram.svg)
+1. Wire everything per the table above and `docs/wiring-diagram.svg`.
 2. Copy `config/secrets.yaml.example` to `config/secrets.yaml` and fill in
    your WiFi credentials. (Or let the ESPHome dashboard generate an API key
    for you when you add the device — either works.)
@@ -145,7 +162,11 @@ one above is exactly what makes this useful across the product line.
   the original Modbus RTU reverse-engineering this repo builds on, including
   ruling out Ampinvt's separate APC charge-controller protocol and finding
   the RJ45 pin 6 danger voltage.
-- Not affiliated with or endorsed by Ampinvt / Foshan Top One Power
+- Manufacturer protocol document: 逆变器 MODBUS 通讯协议 V1.0, 佛山市金广源电源科技有限公司
+  (Foshan Jinguangyuan Power Technology Co., Ltd.), 2018-08 — see
+  [`docs/modbus-protocol-reference.md`](docs/modbus-protocol-reference.md)
+  for the translated reference this repo uses.
+- Not affiliated with or endorsed by Ampinvt or Foshan Jinguangyuan Power
   Technology.
 
 ## License

@@ -75,13 +75,7 @@ modbus_controller:
   update_interval: 5s
 
 sensor:
-  # --- Confirmed working input registers (function 0x04) on the 800W unit ---
-  # Load %, Output Power, and both Temperature registers were swept
-  # extensively (input regs 0-32, several holding regs) and found to be
-  # unimplemented on this 800W unit — they read a static 0/1 regardless of
-  # real load. See FINDINGS.md. Use an external smart plug for real power
-  # draw if you need it.
-
+  # --- Confirmed working input registers (function 0x04) ---
   - platform: modbus_controller
     modbus_controller_id: ampinvt
     name: "AC Input Voltage"
@@ -145,12 +139,20 @@ sensor:
     state_class: measurement
     value_type: U_WORD
     accuracy_decimals: 0
+    # Fires Calculated Load the instant this value updates, rather than on
+    # its own independent timer. The two were previously out of sync (e.g.
+    # 23% showing alongside 208W / 152W instead of the correct 184W) because
+    # the template sensor polled on its own 5s clock, drifting against this
+    # sensor's own 5s Modbus poll cycle.
+    on_value:
+      then:
+        - sensor.template.publish:
+            id: calculated_load
+            state: !lambda "return x * 8.0;"
 
-  # Derived, not measured — this unit does not report Output Power over
-  # Modbus (see FINDINGS.md). Assumes a linear 800W scale against Load %,
-  # verified at only two real-load data points (~20%, ~35%). Treat as a
-  # rough estimate for dashboards/automations, not a substitute for a
-  # real power meter.
+  # Derived load estimation — now driven entirely by load_percentage's
+  # on_value trigger above, not its own timer. No lambda/update_interval
+  # needed here; sensor.template.publish sets the state directly.
   - platform: template
     name: "Calculated Load"
     id: calculated_load
@@ -158,13 +160,6 @@ sensor:
     device_class: power
     state_class: measurement
     accuracy_decimals: 0
-    update_interval: 5s
-    lambda: |-
-      if (id(load_percentage).has_state()) {
-        return id(load_percentage).state * 8.0;  // 800W rated / 100
-      } else {
-        return {};
-      }
 
   - platform: modbus_controller
     modbus_controller_id: ampinvt
@@ -190,22 +185,117 @@ sensor:
     value_type: U_WORD
     accuracy_decimals: 0
 
-  # Status/mode word — bit meanings not decoded. Kept as a diagnostic
-  # entity in case patterns emerge across states (AC loss, fault, idle)
-  # worth documenting upstream.
+  # Operating status word (Input Register 32). Vendor-confirmed bit
+  # assignments (see binary_sensor block below). One transitional value
+  # observed and worth noting: during a grid-restore event, the word
+  # briefly read 261 (0x105 = Grid Normal + Inverter Active + Output
+  # Enabled, Charging bit NOT set) for a single ~5s poll cycle before
+  # settling into steady-state 259 (Grid Normal + Charging + Output
+  # Enabled). This contradicts an earlier assumption (sourced from another
+  # HT-12212 owner's GitHub issue) that 261 represents a sustained
+  # "Inverter Mode" state — on this unit it looks like a brief grid
+  # hand-off transient, not a steady operating mode. See FINDINGS.md.
   - platform: modbus_controller
     modbus_controller_id: ampinvt
-    name: "Status Word (raw)"
+    id: ampinvt_status_word
+    name: "Operating Status Word (raw)"
     register_type: read
     address: 32
     value_type: U_WORD
     accuracy_decimals: 0
     entity_category: diagnostic
 
-  # Uptime/WiFi diagnostics
+  # Event / Alarm code (Input Register 35)
+  - platform: modbus_controller
+    modbus_controller_id: ampinvt
+    id: ampinvt_event_code
+    name: "Event Code (raw)"
+    register_type: read
+    address: 35
+    value_type: U_WORD
+    accuracy_decimals: 0
+    entity_category: diagnostic
+
+  # NOTE: "Inverter Working Mode Raw" (holding register 0x0007) and its
+  # decoded text_sensor "Inverter Operating Mode" have been REMOVED.
+  # That mapping came from an unofficial community source (another
+  # HT-12212 owner's GitHub issue) rather than the vendor Modbus doc, and
+  # on this unit it produced a value ("Inverter Mode (Battery)") directly
+  # contradicting the vendor-confirmed status bits read at the same
+  # moment (Grid Normal + Battery Charging both true, Inverter Active
+  # false). See FINDINGS.md for details — labeled unconfirmed/likely
+  # wrong for this model, pending a real test against a deliberate state
+  # change (e.g. cutting AC input).
+
+  # WiFi / Uptime diagnostics
   - platform: wifi_signal
     name: "WiFi Signal"
     update_interval: 60s
 
   - platform: uptime
     name: "Uptime"
+
+binary_sensor:
+  # Decoded from Register 32 — vendor-confirmed bit assignments
+  # (Table 3.1.2 of the Foshan Jinguangyuan inverter Modbus protocol doc):
+  # Bit0 = 市电正常 (Grid Normal), Bit1 = 充电运行中 (Battery Charging),
+  # Bit2 = 逆变运行中 (Inverter Active), Bit8 = 输出开启 (Output Enabled)
+  - platform: template
+    name: "Grid Normal"
+    device_class: plug
+    lambda: |-
+      if (id(ampinvt_status_word).has_state()) {
+        return ((uint16_t)id(ampinvt_status_word).state & 0x0001) != 0;
+      }
+      return {};
+
+  - platform: template
+    name: "Battery Charging"
+    device_class: battery_charging
+    lambda: |-
+      if (id(ampinvt_status_word).has_state()) {
+        return ((uint16_t)id(ampinvt_status_word).state & 0x0002) != 0;
+      }
+      return {};
+
+  - platform: template
+    name: "Inverter Active"
+    device_class: running
+    lambda: |-
+      if (id(ampinvt_status_word).has_state()) {
+        return ((uint16_t)id(ampinvt_status_word).state & 0x0004) != 0;
+      }
+      return {};
+
+  - platform: template
+    name: "Output Enabled"
+    device_class: power
+    lambda: |-
+      if (id(ampinvt_status_word).has_state()) {
+        return ((uint16_t)id(ampinvt_status_word).state & 0x0100) != 0;
+      }
+      return {};
+
+text_sensor:
+  # Decoded from Register 35 — vendor-confirmed, word-for-word match
+  # (Table 3.1.3 of the Foshan Jinguangyuan inverter Modbus protocol doc)
+  - platform: template
+    name: "Inverter Event and Alarm State"
+    id: ampinvt_event_text
+    icon: mdi:alert-circle-outline
+    lambda: |-
+      if (!id(ampinvt_event_code).has_state()) return std::string("Unknown");
+      int code = (int) id(ampinvt_event_code).state;
+      switch (code) {
+        case 0: return std::string("Normal (No Event)");
+        case 1: return std::string("Internal Overcurrent Protection");
+        case 2: return std::string("Output Short Circuit Protection");
+        case 3: return std::string("Output Overload Protection");
+        case 4: return std::string("System Overtemperature Protection");
+        case 5: return std::string("High Battery Voltage Protection");
+        case 6: return std::string("Low Battery Voltage Protection");
+        case 7: return std::string("Phase Sequence Error Warning");
+        case 8: return std::string("Low Output Voltage Protection");
+        case 9: return std::string("ECO Mode Active");
+        default: return std::string("Unknown Code (" + std::to_string(code) + ")");
+      }
